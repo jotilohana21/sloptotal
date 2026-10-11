@@ -71,23 +71,18 @@ Incoming request
     └── Full analysis    ──→ _full_executor (N workers, N = usable cores)
 ```
 
-- Semaphore guards prevent overload (`_snippet_semaphore`, `_full_semaphore`)
-- `QueueManager` provides request queuing with ticket-based polling for web clients
-- 4 "hot" engines (BERT-RAID, E5, TMR, Fakespot) use `ModelPool` for thread-safe replica access
-- Every model load holds `model_pool.LOAD_LOCK`. transformers' `from_pretrained` is not thread-safe across models; concurrent loads (preloader plus first request) have left GPT-2's tied head randomly initialised. Lazy loaders use double-checked locking and publish the model only after the tokenizer is set and `eval()` has run.
-
 ### Scoring Calibration
 
-The final score is **not** a simple average, and every step was derived from
-the corpora in `tests/eval/` (see `tests/eval/FINDINGS.md`):
+The final score is produced by a logistic fit with non-negative weights trained on human-labelled examples. The fit lives in `app/calibration.py` and the fitted parameters in `app/calibration.json`.
 
-1. **Weighted baseline** -- `ENGINE_WEIGHTS` in config.py, proportional to each engine's Somers' D (2*AUC - 1) and scaled down by any bias against pre-1920 prose
-2. **Anchor on unbiased classifiers** -- Desklib, SuperAnnotate, E5 and ReMoDetect consensus is blended 60/40 with the full weighted set
-3. **Confidence from agreement** -- spread across independent engine families, not one engine's certainty
-4. **Skepticism only when earned** -- unanimous high classifier scores are damped only when the text carries human markers (contractions, first person, slang)
-5. **Human signal adjustment** -- those markers also pull the score down slightly
+Key properties of the current model:
 
-Verdict bands (`SCORE_CLEAN` ... `SCORE_LIKELY_AI`) live only in config.py; the report page receives them from the template.
+- **Logistic fit with non-negative weights** — each signal contributes positively to the slop score; no signal can cancel another.
+- **Short-text shrink** — documents shorter than a minimum token count are shrunk toward the prior to avoid overconfident scores on thin evidence.
+- **Per-language offset and support** — languages with enough training data carry a per-language intercept offset; unsupported languages fall back to the language-agnostic baseline.
+- **Confidence rule** — a score is marked high-confidence only when the input length and signal strength both exceed per-model thresholds.
+
+Verdict bands (`SCORE_CLEAN` ... `SCORE_LIKELY_AI`) live only in `config.py`; the report page receives them from the template. See the README's Scoring section for a worked example and parameter details.
 
 ---
 
