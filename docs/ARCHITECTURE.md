@@ -73,16 +73,16 @@ Incoming request
 
 ### Scoring Calibration
 
-The final score is produced by a logistic fit with non-negative weights trained on human-labelled examples. The fit lives in `app/calibration.py` and the fitted parameters in `app/calibration.json`.
+The score is produced by `app/calibration.py`. Parameters live in `app/calibration.json` and are never edited by hand; they are fitted by `tests/eval/slopbench/fit.py` (English) and `fit_multilingual.py`.
 
-Key properties of the current model:
+- **Logistic model** -- a weighted sum of engine logits with non-negative weights, mapped to 0-100 by piecewise-linear knots calibrated so band edges match a measured share of human text.
+- **Short-text adjustment** -- English texts under `SHORT_TEXT_WORDS = 80` are pulled toward a neutral score by `words / (words + k)`; other spaced languages use `short_alpha`.
+- **Per-language support** -- each language carries an offset and a support status: `supported`, `experimental`, or `unsupported`; unsupported languages fall back to the baseline.
+- **Confidence** -- low for short texts, scores in `UNCERTAIN` (35-65), or unsupported languages; at most medium for experimental languages; high only outside `CONFIDENT` (15/80).
 
-- **Logistic fit with non-negative weights** — each signal contributes positively to the slop score; no signal can cancel another.
-- **Short-text shrink** — documents shorter than a minimum token count are shrunk toward the prior to avoid overconfident scores on thin evidence.
-- **Per-language offset and support** — languages with enough training data carry a per-language intercept offset; unsupported languages fall back to the language-agnostic baseline.
-- **Confidence rule** — a score is marked high-confidence only when the input length and signal strength both exceed per-model thresholds.
+The quick path has its own calibration, fitted by `tests/eval/slopbench/fit_quick.py`. Scoring requests are routed through `app/calibration.py`.
 
-Verdict bands (`SCORE_CLEAN` ... `SCORE_LIKELY_AI`) live only in `config.py`; the report page receives them from the template. See the README's Scoring section for a worked example and parameter details.
+Verdict bands (`SCORE_CLEAN` ... `SCORE_LIKELY_AI`) live only in `config.py`; the report page receives them from the template.
 
 ---
 
