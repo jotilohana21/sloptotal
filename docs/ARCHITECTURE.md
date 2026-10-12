@@ -26,7 +26,8 @@ FastAPI application with hardware-aware auto-configuration.
 - `app/routes/queue.py` -- Queue management (`/api/queue/status`, `/api/queue/ticket/{id}`)
 
 **Core:**
-- `app/analyzer.py` -- Engine orchestration, scoring calibration, batch inference
+- `app/analyzer.py` -- Engine orchestration, batch inference
+- `app/calibration.py` -- The overall score, its confidence and language support, from the fits in `app/calibration.json`
 - `app/engines/` -- 23 detection engines, each inheriting from `BaseEngine`
 - `app/config.py` -- Engine weights, scoring thresholds, paths
 - `app/schemas.py` -- Pydantic models for requests/responses
@@ -71,16 +72,21 @@ Incoming request
     └── Full analysis    ──→ _full_executor (N workers, N = usable cores)
 ```
 
+- Semaphore guards prevent overload (`_snippet_semaphore`, `_full_semaphore`)
+- `QueueManager` provides request queuing with ticket-based polling for web clients
+- 4 "hot" engines (BERT-RAID, E5, TMR, Fakespot) use `ModelPool` for thread-safe replica access
+- Every model load holds `model_pool.LOAD_LOCK`. transformers' `from_pretrained` is not thread-safe across models; concurrent loads (preloader plus first request) have left GPT-2's tied head randomly initialised. Lazy loaders use double-checked locking and publish the model only after the tokenizer is set and `eval()` has run.
+
 ### Scoring Calibration
 
 The score is produced by `app/calibration.py`. Parameters live in `app/calibration.json` and are never edited by hand; they are fitted by `tests/eval/slopbench/fit.py` (English) and `fit_multilingual.py`.
 
 - **Logistic model** -- a weighted sum of engine logits with non-negative weights, mapped to 0-100 by piecewise-linear knots calibrated so band edges match a measured share of human text.
 - **Short-text adjustment** -- English texts under `SHORT_TEXT_WORDS = 80` are pulled toward a neutral score by `words / (words + k)`; other spaced languages use `short_alpha`.
-- **Per-language support** -- each language carries an offset and a support status: `supported`, `experimental`, or `unsupported`; unsupported languages fall back to the baseline.
+- **Per-language support** -- each language carries an offset and a support status: `supported`, `experimental`, or `unsupported`. Unsupported languages are scored but never above low confidence.
 - **Confidence** -- low for short texts, scores in `UNCERTAIN` (35-65), or unsupported languages; at most medium for experimental languages; high only outside `CONFIDENT` (15/80).
 
-The quick path has its own calibration, fitted by `tests/eval/slopbench/fit_quick.py`. Scoring requests are routed through `app/calibration.py`.
+The quick path has its own calibration, fitted by `tests/eval/slopbench/fit_quick.py`.
 
 Verdict bands (`SCORE_CLEAN` ... `SCORE_LIKELY_AI`) live only in `config.py`; the report page receives them from the template.
 
